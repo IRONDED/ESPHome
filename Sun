@@ -1,0 +1,157 @@
+esphome:
+  name: childrens-esp32
+  friendly_name: childrens_esp32
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+# Добавляем сервис для обновления значения (опционально)
+api:
+  encryption:
+    key: ""
+
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: ""
+
+ota:
+  - platform: esphome
+    password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ""
+    password: ""
+
+
+
+captive_portal:
+
+
+# Настройка I2C для DS3231
+i2c:
+  sda: GPIO4   # D2 на NodeMCU
+  scl: GPIO15   # D1 на NodeMCU
+  scan: true   # Опционально: показывает найденные I2C устройства при запуске
+
+# Настройка RTC DS3231
+# Настройка времени через NTP
+time:
+  - platform: ds1307
+    id: ds3231_time
+    update_interval: 15s
+
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time_sync:
+      then:
+        ds1307.write_time:
+            id: ds3231_time
+            
+  # Резервный вариант через NTP
+  - platform: sntp
+    id: sntp_time
+    servers:
+      - pool.ntp.org
+      - time.google.com
+    on_time_sync:
+      then:
+        ds1307.write_time:
+            id: ds3231_time
+
+# Датчики DS3231
+sensor:
+  # Датчик для отображения текущего времени (часы)
+  - platform: template
+    name: "Current Hour"
+    id: current_hour
+    lambda: |-
+      auto time = id(ds3231_time).now();
+      if (time.is_valid()) {
+        return time.hour;
+      } else {
+        return NAN;
+      }
+    update_interval: 60s
+    
+  # Датчик для отображения текущего времени (минуты)
+  - platform: template
+    name: "Current Minute"
+    id: current_minute
+    lambda: |-
+      auto time = id(ds3231_time).now();
+      if (time.is_valid()) {
+        return time.minute;
+      } else {
+        return NAN;
+      }
+    update_interval: 60s
+
+# Текстовый сенсор для форматированного времени
+text_sensor:
+  - platform: template
+    name: "Current Time"
+    id: formatted_time
+    lambda: |-
+      auto time = id(ds3231_time).now();
+      if (time.is_valid()) {
+        char buffer[20];
+        sprintf(buffer, "%02d:%02d:%02d", time.hour, time.minute, time.second);
+        return {buffer};
+      } else {
+        return {"--:--:--"};
+      }
+    update_interval: 1s
+    
+  - platform: template
+    name: "Current Date"
+    id: formatted_date
+    lambda: |-
+      auto time = id(ds3231_time).now();
+      if (time.is_valid()) {
+        char buffer[20];
+        sprintf(buffer, "%02d.%02d.%04d", time.day_of_month, time.month, time.year);
+        return {buffer};
+      } else {
+        return {"--.--.----"};
+      }
+    update_interval: 60s
+
+# Кнопка для ручной синхронизации времени
+button:
+  - platform: template
+    name: "Sync RTC Time"
+    on_press:
+      then:
+        # Сначала пробуем синхронизировать с Home Assistant
+        - if:
+            condition:
+              time.has_time:
+                id: homeassistant_time
+            then:
+              - ds1307.write_time:
+                  id: ds3231_time
+            else:
+              # Если нет времени от HA, пробуем SNTP
+              - if:
+                  condition:
+                    time.has_time:
+                      id: sntp_time
+                  then:
+                    - ds1307.write_time:
+                        id: ds3231_time
+                  else:
+                    - logger.log: "Unable to sync time - no valid time source available"
