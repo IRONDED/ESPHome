@@ -21,7 +21,7 @@ web_server:
   port: 80
   auth:
     username: admin
-    password: ""
+    password: "1104333933"
 
 ota:
   - platform: esphome
